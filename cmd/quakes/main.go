@@ -2,12 +2,22 @@ package main
 
 import (
 	"fmt"
-	"net/http"
-
 	"github.com/alessandro54/quakes/internal/routes"
+	"github.com/alessandro54/quakes/internal/services"
+	"github.com/robfig/cron/v3"
+	"log"
+	"net/http"
 )
 
 func main() {
+	c := cron.New()
+
+	scheduleEarthquakeJob(c)
+
+	c.Start()
+
+	defer c.Stop()
+
 	router := routes.NewRouter()
 
 	port := 8080
@@ -17,5 +27,16 @@ func main() {
 	err := http.ListenAndServe(addr, router)
 	if err != nil {
 		panic(err)
+	}
+}
+
+func scheduleEarthquakeJob(c *cron.Cron) {
+	job := func() {
+		services.CheckNewEarthquake()
+	}
+	_, err := c.AddFunc("@every 1m", job)
+
+	if err != nil {
+		log.Fatalf("Error scheduling job: %v\n", err)
 	}
 }

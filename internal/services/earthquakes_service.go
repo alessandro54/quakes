@@ -1,54 +1,114 @@
 package services
 
 import (
-	"encoding/json"
+	"context"
+	"errors"
 	"fmt"
-	"io"
-	"net/http"
+	"github.com/alessandro54/quakes/internal/database"
+	"github.com/alessandro54/quakes/internal/models"
+	"github.com/alessandro54/quakes/internal/providers"
+	"google.golang.org/api/iterator"
+	"strings"
+	"sync"
+	"time"
 )
 
-const baseUrl = "https://ultimosismo.igp.gob.pe/ultimo-sismo/ajaxb/"
+func ListEarthquakes() []models.Earthquake {
+	var earthquakes []models.Earthquake
 
-type Earthquake struct {
-	Magnitude float32 `json:"magnitud"`
-	Intensity string  `json:"intensidad"`
-	Latitude  float32 `json:"latitud"`
-	Longitude float32 `json:"longitud"`
-	Depth     float32 `json:"profundidad"`
-	Reference string  `json:"referencia"`
-	LocalDate string  `json:"fecha_local"`
-	LocalTime string  `json:"hora_local"`
+	ctx := context.Background()
+
+	client := database.Client()
+
+	iter := client.Collection("Earthquakes").Documents(ctx)
+	defer iter.Stop()
+
+	for {
+		doc, err := iter.Next()
+		if errors.Is(err, iterator.Done) {
+			break
+		}
+		if err != nil {
+			break
+		}
+
+		var earthquake models.Earthquake
+		if err := doc.DataTo(&earthquake); err != nil {
+
+		}
+		earthquakes = append(earthquakes, earthquake)
+	}
+	return earthquakes
 }
 
-type Response struct {
-	Data []Earthquake `json:"data"`
+func CheckNewEarthquake() error {
+	var wg sync.WaitGroup
+	var dbData, providerData []models.Earthquake
+
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		dbData = ListEarthquakes()
+	}()
+
+	go func() {
+		defer wg.Done()
+		loc, _ := time.LoadLocation("America/Lima")
+		providerData = providers.ByYear(time.Now().In(loc).Year())
+	}()
+
+	wg.Wait()
+
+	if (len(providerData) - len(dbData)) != 0 {
+		fmt.Printf("Data is not synchronized\n")
+		println(len(syncEarthquakes(providerData, dbData)))
+	}
+	return nil
 }
 
-func ByYear(year int) string {
-	res, err := http.Get(baseUrl + fmt.Sprint(year))
+func syncEarthquakes(dbData, providerData []models.Earthquake) []models.Earthquake {
+	fmt.Printf("Syncing data...\n")
+	existingEarthquakes := make(map[string]bool)
 
-	if err != nil {
-		fmt.Printf("Error creando la solicitud: %v\n", err)
-		return ""
+	for _, eq := range dbData {
+		key := generateEarthquakeKey(eq)
+		existingEarthquakes[key] = true
 	}
 
-	body, err := io.ReadAll(res.Body)
+	var newEarthquakes []models.Earthquake
+	for _, eq := range providerData {
+		key := generateEarthquakeKey(eq)
 
-	if err != nil {
-		fmt.Printf("Error leyendo la respuesta: %v\n", err)
-		return ""
+		if !existingEarthquakes[key] {
+			newEarthquakes = append(newEarthquakes, eq)
+		}
 	}
 
-	var response Response
+	return newEarthquakes
+}
 
-	if err := json.Unmarshal(body, &response); err != nil {
-		fmt.Printf("Error decodificando la respuesta: %v\n", err)
-		return ""
-	}
+func generateEarthquakeKey(eq models.Earthquake) string {
+	return fmt.Sprintf("%f-%f-%s-%s", eq.Latitude, eq.Longitude, strings.TrimSpace(eq.LocalDate), strings.TrimSpace(eq.LocalTime))
+}
 
-	for _, item := range response.Data {
-		fmt.Printf("Magnitud: %f\n", item.Magnitude)
-	}
+func CreateEarthquake(earthquake models.Earthquake) error {
+	//_, _, err = client.Collection("Earthquakes").Add(ctx, models.Earthquake{
+	//	LocalDate: "11:37:33",
+	//	LocalTime: "11:37:33",
+	//	Latitude:  -13.53,
+	//	Longitude: -76.2,
+	//	Magnitude: 3.6,
+	//	Depth:     33,
+	//	Intensity: "III Tambo De Mora",
+	//	Reference: "8 km al S de Tambo De Mora, Chincha - Ica",
+	//})
+	fmt.Printf(earthquake.Reference)
 
-	return string(body)
+	//_, _, err = database.Client().
+	//	Collection("Earthquakes").
+	//	Add(context.Background(), earthquake)
+
+	fmt.Printf("Earthquake added successfully\n")
+	return nil
 }

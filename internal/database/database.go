@@ -4,9 +4,12 @@ import (
 	"cloud.google.com/go/firestore"
 	"context"
 	"log"
+	"os"
 )
 
-func Client() {
+func Client() *firestore.Client {
+	err := os.Setenv("FIRESTORE_EMULATOR_HOST", "localhost:8491")
+
 	ctx := context.Background()
 	client, err := firestore.NewClient(ctx, "alessandro-423819")
 
@@ -15,4 +18,6 @@ func Client() {
 	}
 
 	defer client.Close()
+
+	return client
 }

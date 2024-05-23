@@ -1,0 +1,4 @@
+package jobs
+
+func EarthquakeFetchJob() {
+}
