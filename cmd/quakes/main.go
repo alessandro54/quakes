@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/alessandro54/quakes/internal/globals"
 	"github.com/alessandro54/quakes/internal/routes"
 	"github.com/alessandro54/quakes/internal/services"
 	"github.com/robfig/cron/v3"
@@ -32,9 +33,12 @@ func main() {
 
 func scheduleEarthquakeJob(c *cron.Cron) {
 	job := func() {
-		services.CheckNewEarthquake()
+		if !globals.Busy {
+			services.CheckNewEarthquake()
+		}
+
 	}
-	_, err := c.AddFunc("@every 1m", job)
+	_, err := c.AddFunc("@every 5m", job)
 
 	if err != nil {
 		log.Fatalf("Error scheduling job: %v\n", err)

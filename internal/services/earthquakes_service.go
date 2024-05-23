@@ -1,27 +1,29 @@
 package services
 
 import (
+	"cloud.google.com/go/firestore"
 	"context"
 	"errors"
 	"fmt"
 	"github.com/alessandro54/quakes/internal/database"
+	"github.com/alessandro54/quakes/internal/globals"
 	"github.com/alessandro54/quakes/internal/models"
 	"github.com/alessandro54/quakes/internal/providers"
 	"google.golang.org/api/iterator"
-	"strings"
+	"log"
+	"sort"
 	"sync"
 	"time"
 )
 
 func ListEarthquakes() []models.Earthquake {
-	var earthquakes []models.Earthquake
-
 	ctx := context.Background()
 
 	client := database.Client()
 
-	iter := client.Collection("Earthquakes").Documents(ctx)
-	defer iter.Stop()
+	iter := client.Collection("earthquakes").OrderBy("report_number", firestore.Desc).Documents(ctx)
+
+	var earthquakes []models.Earthquake
 
 	for {
 		doc, err := iter.Next()
@@ -29,27 +31,64 @@ func ListEarthquakes() []models.Earthquake {
 			break
 		}
 		if err != nil {
-			break
+			log.Fatalf("Failed to iterate: %v", err)
 		}
 
 		var earthquake models.Earthquake
 		if err := doc.DataTo(&earthquake); err != nil {
-
+			log.Fatalf("Failed to convert data: %v", err)
 		}
+
 		earthquakes = append(earthquakes, earthquake)
 	}
+	defer client.Close()
+
 	return earthquakes
+}
+
+func GetLatestEarthquake() *models.Earthquake {
+	ctx := context.Background()
+
+	client := database.Client()
+
+	// Query for the latest document based on the reportNumber field
+	iter := client.Collection("earthquakes").OrderBy("report_number", firestore.Desc).Limit(1).Documents(ctx)
+	doc, err := iter.Next()
+	if errors.Is(err, iterator.Done) {
+		return nil
+	}
+	if err != nil {
+		return nil
+	}
+
+	var earthquake models.Earthquake
+
+	if err := doc.DataTo(&earthquake); err != nil {
+		return nil
+	}
+
+	defer client.Close()
+
+	return &earthquake
 }
 
 func CheckNewEarthquake() error {
 	var wg sync.WaitGroup
-	var dbData, providerData []models.Earthquake
+	var providerData []models.Earthquake
+	var lastDbReportNumber = 0
 
 	wg.Add(2)
 
 	go func() {
 		defer wg.Done()
-		dbData = ListEarthquakes()
+
+		lastEarthquake := GetLatestEarthquake()
+
+		if lastEarthquake == nil {
+			return
+		}
+
+		lastDbReportNumber = lastEarthquake.ReportNumber
 	}()
 
 	go func() {
@@ -60,55 +99,48 @@ func CheckNewEarthquake() error {
 
 	wg.Wait()
 
-	if (len(providerData) - len(dbData)) != 0 {
+	sort.Sort(models.ByReportNumber(providerData))
+
+	if providerData[0].ReportNumber != lastDbReportNumber {
 		fmt.Printf("Data is not synchronized\n")
-		println(len(syncEarthquakes(providerData, dbData)))
+		globals.Busy = true
+		syncEarthquakes(providerData, lastDbReportNumber)
+	} else {
+		fmt.Printf("Data is synchronized\n")
 	}
 	return nil
 }
 
-func syncEarthquakes(dbData, providerData []models.Earthquake) []models.Earthquake {
-	fmt.Printf("Syncing data...\n")
-	existingEarthquakes := make(map[string]bool)
+func syncEarthquakes(providerData []models.Earthquake, latestDBNumber int) {
+	latestProviderNumber := providerData[0].ReportNumber
 
-	for _, eq := range dbData {
-		key := generateEarthquakeKey(eq)
-		existingEarthquakes[key] = true
-	}
+	toSync := latestProviderNumber - latestDBNumber
+	count := toSync
 
-	var newEarthquakes []models.Earthquake
-	for _, eq := range providerData {
-		key := generateEarthquakeKey(eq)
-
-		if !existingEarthquakes[key] {
-			newEarthquakes = append(newEarthquakes, eq)
+	for i := 0; i < toSync; i++ {
+		err := createEarthquake(providerData[i])
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
 		}
+		count--
+		fmt.Printf("Count: %v\n", count)
 	}
 
-	return newEarthquakes
+	globals.Busy = false
 }
 
-func generateEarthquakeKey(eq models.Earthquake) string {
-	return fmt.Sprintf("%f-%f-%s-%s", eq.Latitude, eq.Longitude, strings.TrimSpace(eq.LocalDate), strings.TrimSpace(eq.LocalTime))
-}
+func createEarthquake(earthquake models.Earthquake) error {
+	client := database.Client()
+	ctx := context.Background()
 
-func CreateEarthquake(earthquake models.Earthquake) error {
-	//_, _, err = client.Collection("Earthquakes").Add(ctx, models.Earthquake{
-	//	LocalDate: "11:37:33",
-	//	LocalTime: "11:37:33",
-	//	Latitude:  -13.53,
-	//	Longitude: -76.2,
-	//	Magnitude: 3.6,
-	//	Depth:     33,
-	//	Intensity: "III Tambo De Mora",
-	//	Reference: "8 km al S de Tambo De Mora, Chincha - Ica",
-	//})
-	fmt.Printf(earthquake.Reference)
-
-	//_, _, err = database.Client().
-	//	Collection("Earthquakes").
-	//	Add(context.Background(), earthquake)
+	_, _, err := client.Collection("earthquakes").Add(ctx, earthquake)
+	if err != nil {
+		fmt.Printf("Error adding earthquake: %v\n", err)
+		return err
+	}
 
 	fmt.Printf("Earthquake added successfully\n")
+
+	defer client.Close()
 	return nil
 }
