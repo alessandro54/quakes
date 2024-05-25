@@ -1,4 +1,0 @@
-package jobs
-
-func EarthquakeFetchJob() {
-}

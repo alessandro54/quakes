@@ -8,20 +8,28 @@ import (
 	"github.com/alessandro54/quakes/internal/database"
 	"github.com/alessandro54/quakes/internal/globals"
 	"github.com/alessandro54/quakes/internal/models"
-	"github.com/alessandro54/quakes/internal/providers"
 	"google.golang.org/api/iterator"
 	"log"
-	"sort"
-	"sync"
+	"net/url"
+	"strconv"
 	"time"
 )
 
-func ListEarthquakes() []models.Earthquake {
+func ListEarthquakes(page int, limit int, params url.Values) []models.Earthquake {
 	ctx := context.Background()
 
 	client := database.Client()
 
-	iter := client.Collection("earthquakes").OrderBy("report_number", firestore.Desc).Documents(ctx)
+	dbEarthquakes := listFilters(client.Collection("earthquakes"), params)
+
+	if params.Get("all") != "true" {
+		dbEarthquakes = dbEarthquakes.
+			OrderBy("report_number", firestore.Desc).
+			Offset((page - 1) * limit).
+			Limit(limit)
+	}
+
+	iter := dbEarthquakes.Documents(ctx)
 
 	var earthquakes []models.Earthquake
 
@@ -46,7 +54,7 @@ func ListEarthquakes() []models.Earthquake {
 	return earthquakes
 }
 
-func GetLatestEarthquake() *models.Earthquake {
+func LatestEarthquake() *models.Earthquake {
 	ctx := context.Background()
 
 	client := database.Client()
@@ -72,63 +80,6 @@ func GetLatestEarthquake() *models.Earthquake {
 	return &earthquake
 }
 
-func CheckNewEarthquake() error {
-	var wg sync.WaitGroup
-	var providerData []models.Earthquake
-	var lastDbReportNumber = 0
-
-	wg.Add(2)
-
-	go func() {
-		defer wg.Done()
-
-		lastEarthquake := GetLatestEarthquake()
-
-		if lastEarthquake == nil {
-			return
-		}
-
-		lastDbReportNumber = lastEarthquake.ReportNumber
-	}()
-
-	go func() {
-		defer wg.Done()
-		loc, _ := time.LoadLocation("America/Lima")
-		providerData = providers.ByYear(time.Now().In(loc).Year())
-	}()
-
-	wg.Wait()
-
-	sort.Sort(models.ByReportNumber(providerData))
-
-	if providerData[0].ReportNumber != lastDbReportNumber {
-		fmt.Printf("Data is not synchronized\n")
-		globals.Busy = true
-		syncEarthquakes(providerData, lastDbReportNumber)
-	} else {
-		fmt.Printf("Data is synchronized\n")
-	}
-	return nil
-}
-
-func syncEarthquakes(providerData []models.Earthquake, latestDBNumber int) {
-	latestProviderNumber := providerData[0].ReportNumber
-
-	toSync := latestProviderNumber - latestDBNumber
-	count := toSync
-
-	for i := 0; i < toSync; i++ {
-		err := createEarthquake(providerData[i])
-		if err != nil {
-			fmt.Printf("Error: %v\n", err)
-		}
-		count--
-		fmt.Printf("Count: %v\n", count)
-	}
-
-	globals.Busy = false
-}
-
 func createEarthquake(earthquake models.Earthquake) error {
 	client := database.Client()
 	ctx := context.Background()
@@ -143,4 +94,41 @@ func createEarthquake(earthquake models.Earthquake) error {
 
 	defer client.Close()
 	return nil
+}
+
+func listFilters(collection *firestore.CollectionRef, params url.Values) firestore.Query {
+	startDate := params.Get("start_date")
+	endDate := params.Get("end_date")
+	maxMagnitude := params.Get("max-mag")
+	minMagnitude := params.Get("min-mag")
+	all := params.Get("all")
+
+	earthquakes := collection.Query
+
+	if startDate != "" {
+		earthquakes = earthquakes.Where("local_date", ">=", startDate)
+	} else {
+		if all != "true" {
+			minDate := fmt.Sprintf("%d-01-01", time.Now().In(globals.Location).Year())
+			earthquakes = earthquakes.Where("local_date", ">=", minDate)
+		}
+	}
+
+	if endDate != "" {
+		earthquakes = earthquakes.Where("local_date", "<=", endDate)
+	}
+
+	if maxMagnitude != "" {
+		if maxMag, err := strconv.ParseFloat(maxMagnitude, 64); err == nil {
+			earthquakes = earthquakes.Where("magnitude", "<=", maxMag)
+		}
+	}
+
+	if minMagnitude != "" {
+		if minMag, err := strconv.ParseFloat(minMagnitude, 64); err == nil {
+			earthquakes = earthquakes.Where("magnitude", ">=", minMag)
+		}
+	}
+
+	return earthquakes
 }

@@ -34,7 +34,7 @@ func main() {
 func scheduleEarthquakeJob(c *cron.Cron) {
 	job := func() {
 		if !globals.Busy {
-			services.CheckNewEarthquake()
+			services.DetectNewEarthquakes()
 		}
 
 	}
