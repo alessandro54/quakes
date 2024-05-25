@@ -5,6 +5,7 @@ import (
 	"github.com/alessandro54/quakes/internal/globals"
 	"github.com/alessandro54/quakes/internal/routes"
 	"github.com/alessandro54/quakes/internal/services"
+	"github.com/joho/godotenv"
 	"github.com/robfig/cron/v3"
 	"log"
 	"net/http"
@@ -12,6 +13,10 @@ import (
 
 func main() {
 	c := cron.New()
+	dotenv := godotenv.Load()
+	if dotenv != nil {
+		log.Fatalf("Error loading .env file")
+	}
 
 	scheduleEarthquakeJob(c)
 

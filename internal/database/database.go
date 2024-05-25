@@ -7,12 +7,22 @@ import (
 	"os"
 )
 
-func Client() *firestore.Client {
-	err := os.Setenv("FIRESTORE_EMULATOR_HOST", "localhost:9000")
+type ClientInterface interface {
+	Collection(name string) CollectionInterface
+	Close() error
+}
 
+// CollectionInterface represents the collection interface
+type CollectionInterface interface {
+	Add(ctx context.Context, data interface{}) (string, string, error)
+}
+
+func Client() *firestore.Client {
 	ctx := context.Background()
 
-	client, err := firestore.NewClient(ctx, "alessandro-423819")
+	projectId := os.Getenv("FIRESTORE_PROJECT_ID")
+
+	client, err := firestore.NewClient(ctx, projectId)
 
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)

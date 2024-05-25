@@ -8,6 +8,7 @@ import (
 	"log"
 	"sort"
 	"sync"
+	"time"
 )
 
 func DetectNewEarthquakes() error {
@@ -31,8 +32,7 @@ func DetectNewEarthquakes() error {
 
 	go func() {
 		defer wg.Done()
-		//loc, _ := time.LoadLocation("America/Lima")
-		providerData = providers.ByYear(2022)
+		providerData = providers.ByYear(time.Now().In(globals.Location).Year())
 	}()
 
 	wg.Wait()
